@@ -1,0 +1,12 @@
+pyqt6-stock-dev/.venv
+python-38-stock-dev/.venv
+python-39-dev/.venv
+*.db
+**/dist
+**/build
+__pycache__/
+*.spec
+**/tmp
+dibl*.*
+five_minutes_fix.txt
+suspended.txt
