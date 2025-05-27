@@ -1,0 +1,15 @@
+{
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/CVS": true,
+        "**/.DS_Store": true,
+        "**/*.pyc": true,
+        "**/__pycache__": true
+    },
+    "editor.fontLigatures": true,
+    "editor.fontFamily": "Fira Code",
+    "python.analysis.completeFunctionParens": true,
+    "editor.bracketPairColorization.enabled": true
+}
