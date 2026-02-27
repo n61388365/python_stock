@@ -18,6 +18,8 @@
 ## 2025-06-21 周六 【new feature】挂单表排序
 ## 2025-06-24 周二 增加eastmoney timeout
 ## 2025-06-26 周四 【bug fix】删除更新错误在排序后
+## 2025-10-10 周五 【new feature】添加 proxy 选项
+## 2025-10-14 周二 【new feature】两个 api 独立设置 proxy 选项
 ############################################
 
 # import subprocess
@@ -46,69 +48,30 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import (Qt, pyqtSignal, QSortFilterProxyModel, QTimer, QEvent)
 from PyQt6.QtGui import (QBrush, QColor, QIcon)
-import urllib.request
+import urllib.request as urlrequest
 import datetime
-import log
+import utils.log as log
 import compiled_resources
-from utils import file_utils
+from utils import file_utils, get_cookies_from_file
 import traceback
+import pysnowball as ball
 
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 
-log.setLevel(20) # 10 debug 20 info
+# log.setLevel(20) # 10 debug 20 info
+log.setLevel(10) # 10 debug 20 info
 
+# snowball initiate
+snowball_cookies = get_cookies_from_file.get_xueqiu_cookies()
+ball.set_token(f"xq_a_token={snowball_cookies['xq_a_token']};u={snowball_cookies['u']}")
 
 # CREATE_NO_WINDOW = 0x08000000
-global_timer = 2000
-sell_rows = [('f31', 'f32'), ('f33', 'f34'), ('f35', 'f36'), ('f37', 'f38'), ('f39', 'f40')]
-buy_rows = [('f19', 'f20'), ('f17', 'f18'), ('f15', 'f16'),  ('f13', 'f14'), ('f11','f12')]
-
-
-def get_realtime_ticks(stock_code):
-    log.info('loading trading details')
-    # 深证 0. + 000750，上证 1. + 601568
-    stock_code = stock_code.startswith('6') and '1.{}'.format(stock_code) or '0.{}'.format(stock_code)
-    url = 'http://push2.eastmoney.com/api/qt/stock/get?&fltt=2&invt=2&fields=f120,f121,f122,f174,f175,f59,f163,f43,f57,f58,f169,f170,f46,f44,f51,f168,f47,f164,f116,f60,f45,f52,f50,f48,f167,f117,f71,f161,f49,f530,f135,f136,f137,f138,f139,f141,f142,f144,f145,f147,f148,f140,f143,f146,f149,f55,f62,f162,f92,f173,f104,f105,f84,f85,f183,f184,f185,f186,f187,f188,f189,f190,f191,f192,f107,f111,f86,f177,f78,f110,f262,f263,f264,f267,f268,f255,f256,f257,f258,f127,f199,f128,f198,f259,f260,f261,f171,f277,f278,f279,f288,f152,f250,f251,f252,f253,f254,f269,f270,f271,f272,f273,f274,f275,f276,f265,f266,f289,f290,f286,f285,f292,f293,f294,f295&secid={}'.format(stock_code)
-    # result = subprocess.run(['curl', '-x', 'socks5://localhost:7890', url], capture_output=True, text=True, encoding="utf-8", creationflags=CREATE_NO_WINDOW)
-    # data_json = json.loads(result.stdout)
-    # return data_json['data']
-    with urllib.request.urlopen(url=url,timeout=3) as r:
-        data=r.readline().decode().lstrip('data:')
-        data_json = json.loads(data)
-        log.debug(data_json['data'])
-        return data_json['data']
-
-
-def get_today_ticks(stock_code='000750'):
-
-    if stock_code.startswith('6'):
-        stock_code = "1.{}".format(stock_code)
-    else:
-        stock_code = "0.{}".format(stock_code)
-    url='http://16.push2.eastmoney.com/api/qt/stock/details/sse?fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f55&mpi=2000&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&pos=-0&secid={}'.format(stock_code)
-    # get data from eastmoney
-    log.info('loading 盘口')
-    with urllib.request.urlopen(url=url,timeout=3) as r:
-        data=r.readline().decode().lstrip('data:')
-        data_json = json.loads(data)
-        log.debug(data_json['data']['details'])
-    # Convert data to DataFrame
-    df = pd.DataFrame([row.split(',') for row in data_json['data']['details']], 
-                    columns=['Time', 'Price', 'Volume', 'Metric', 'Type'])
-    # Convert columns to appropriate types
-    df['Time'] = df['Time'].map(lambda x: str(x).zfill(6))
-    df['Price'] = df['Price'].astype(float)
-    df['Volume'] = df['Volume'].astype(int)
-    df['Metric'] = df['Metric'].astype(int)
-    df['Type'] = df['Type'].astype(str)
-    log.debug(df.dtypes)
-
-    # Convert time from HH:MM:SS to HHMM
-    try:
-        df['Time'] = df['Time'].str.replace(':', '').astype(int)
-    except Exception as e:
-        raise ValueError(f"时间格式转换失败: {str(e)}")
-
-    return df
+default_proxy_host = 'localhost:7789'
+global_timer = 4000
+sell_rows = [('sp5', 'sc5'), ('sp4', 'sc4'), ('sp3', 'sc3'), ('sp2', 'sc2'), ('sp1', 'sc1')]
+buy_rows = [('bp1', 'bc1'), ('bp2', 'bc2'), ('bp3', 'bc3'),  ('bp4', 'bc4'), ('bp5','bc5')]
 
 
 class MyComboBox(QComboBox):
@@ -184,31 +147,36 @@ class TradeBlock(QWidget):
             'Volume': [5368, 1049, 11248, 3251, 2817],
             'Type': ['1', '2', '4', '2', '1']
         }
-        self.df = pd.DataFrame(self.fallback_data)
+        self.df_fallback = pd.DataFrame(self.fallback_data)
+        self.df_details = pd.DataFrame()
         self.order_book = None
         self.result = None
         self.bid_price = 0
         self.bid_volumn = 0
         self.bid_time = datetime.datetime.now().strftime('%H:%M:%S')
 
-        self.analyze_timer = QTimer()
-        self.analyze_timer.setInterval(global_timer)
-        self.analyze_timer.timeout.connect(self.analyze_data)
+        # self.analyze_timer = QTimer()
+        # self.analyze_timer.setInterval(global_timer)
+        # self.analyze_timer.timeout.connect(self.analyze_data)
 
         self.order_book_timer = QTimer()
         self.order_book_timer.setInterval(global_timer)
-        self.order_book_timer.timeout.connect(self.update_order_book)
+        self.order_book_timer.timeout.connect(self.update_pankou)
 
         # Block layout
         self.layout = QVBoxLayout(self)
 
         # Input and button layout
         self.input_layout = QHBoxLayout()
-        self.stock_label_name = QLabel('股票名称')
-        self.stock_label_name.setFixedWidth(48)
+        self.stock_label_name = QLabel('股票')
+        self.stock_label_name.setFixedWidth(24)
         self.stock_label_name.setStyleSheet("color: yellow;")
         if stock:
-            self.stock_label_name.setText(stock.split(',')[1])
+            self.stock_code = stock.split(',')[0]
+            self.stock_name = stock.split(',')[1]
+            self.stock_label_name.setText(self.stock_name)
+            self.stock_snowball_id = get_snowball_stock_id(self.stock_code)
+            self.stock_last_close = ball.quote_detail(self.stock_snowball_id)['data']["quote"]['last_close']
         self.stock_input = MyComboBox()
         self.stock_input.addItems(file_utils.get_combobox_list())
         self.stock_input.setCurrentText(stock)
@@ -228,24 +196,26 @@ class TradeBlock(QWidget):
         self.time_input.setMinimumWidth(50)
         self.time_input.setPlaceholderText("例如: 150800")
         self.time_input.setText(str(93000))
-        # 挂单价格
-        self.price_label = QLabel("价格")
-        self.price_label.setMinimumWidth(25)
-        self.price_input = QLineEdit()
-        self.price_input.setFixedWidth(50)
-        self.update_button_sell = QPushButton("挂卖单")
-        self.update_button_sell.clicked.connect(lambda checked: self.add_bid_table(checked, True))
-        self.update_button_buy = QPushButton("挂买单")
-        self.update_button_buy.clicked.connect(lambda checked: self.add_bid_table(checked, False))
+        # 使用代理
+        self.proxy_port_label = QLabel("端口")
+        self.proxy_port_label.setMinimumWidth(25)
+        self.proxy_port_input = QLineEdit()
+        self.proxy_port_input.setFixedWidth(50)
         # 成交汇总 + 挂单分析
+        self.proxy_analyze_checkbox_label = QLabel('代理')
+        self.proxy_analyze_checkbox = QCheckBox()
+        self.proxy_analyze_checkbox.setCheckState(Qt.CheckState.Unchecked)        
         self.analyze_button = QPushButton("挂单分析")
         self.analyze_button.setCheckable(True)
-        self.analyze_button.clicked.connect(self.analyze_data_timer)
+        self.analyze_button.clicked.connect(self.update_trade_details)
         # 自动更新
         self.analyze_checkbox_label = QLabel('自动')
         self.analyze_checkbox = QCheckBox()
         self.analyze_checkbox.setCheckState(Qt.CheckState.Unchecked)
         # 盘口更新按钮
+        self.proxy_update_order_book_checkbox_label = QLabel('代理')
+        self.proxy_update_order_book_checkbox = QCheckBox()
+        self.proxy_update_order_book_checkbox.setCheckState(Qt.CheckState.Unchecked)        
         self.update_order_book_button = QPushButton("盘口更新")
         self.update_order_book_button.setCheckable(True)
         self.update_order_book_button.clicked.connect(self.update_order_book_timer)
@@ -254,11 +224,13 @@ class TradeBlock(QWidget):
         self.input_layout.addWidget(self.stock_input)
         self.input_layout.addWidget(self.label)
         self.input_layout.addWidget(self.time_input)
-        # self.input_layout.addWidget(self.price_label)
-        # self.input_layout.addWidget(self.price_input)
-        # self.input_layout.addWidget(self.update_button_sell)
-        # self.input_layout.addWidget(self.update_button_buy)
+        self.input_layout.addWidget(self.proxy_port_label)
+        self.input_layout.addWidget(self.proxy_port_input)
+        self.input_layout.addWidget(self.proxy_analyze_checkbox_label)
+        self.input_layout.addWidget(self.proxy_analyze_checkbox)
         self.input_layout.addWidget(self.analyze_button)
+        self.input_layout.addWidget(self.proxy_update_order_book_checkbox_label)
+        self.input_layout.addWidget(self.proxy_update_order_book_checkbox)
         self.input_layout.addWidget(self.update_order_book_button)
         self.input_layout.addWidget(self.analyze_checkbox_label)
         self.input_layout.addWidget(self.analyze_checkbox)
@@ -382,6 +354,48 @@ class TradeBlock(QWidget):
         self.display_raw_data()
         self.display_order_book()
 
+    def get_today_ticks(self, stock_code='000750'):
+
+        if stock_code.startswith('6'):
+            stock_code = "1.{}".format(stock_code)
+        else:
+            stock_code = "0.{}".format(stock_code)
+        url='http://16.push2.eastmoney.com/api/qt/stock/details/sse?fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f55&mpi=2000&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&pos=-0&secid={}'.format(stock_code)
+        # get data from eastmoney
+        log.info('loading 盘口')
+
+        req = urlrequest.Request(url)
+        if self.proxy_analyze_checkbox.isChecked():
+            proxy_port = self.proxy_port_input.text()
+            proxy_host = default_proxy_host
+            if proxy_port:
+                proxy_host = f"localhost:{proxy_port}"
+            log.info(f'set proxy to port {proxy_host}')
+            req.set_proxy(proxy_host, 'http')        
+
+        with urlrequest.urlopen(req,timeout=3) as r:
+            data=r.readline().decode().lstrip('data:')
+            data_json = json.loads(data)
+            log.debug(data_json['data']['details'])
+        # Convert data to DataFrame
+        df = pd.DataFrame([row.split(',') for row in data_json['data']['details']], 
+                        columns=['Time', 'Price', 'Volume', 'Metric', 'Type'])
+        # Convert columns to appropriate types
+        df['Time'] = df['Time'].map(lambda x: str(x).zfill(6))
+        df['Price'] = df['Price'].astype(float)
+        df['Volume'] = df['Volume'].astype(int)
+        df['Metric'] = df['Metric'].astype(int)
+        df['Type'] = df['Type'].astype(str)
+        log.debug(df.dtypes)
+
+        # Convert time from HH:MM:SS to HHMM
+        try:
+            df['Time'] = df['Time'].str.replace(':', '').astype(int)
+        except Exception as e:
+            raise ValueError(f"时间格式转换失败: {str(e)}")
+
+        return df
+
     def combobox_lineedit_enter_pressed(self):
         print(self.stock_input_line_edit.text())
 
@@ -396,12 +410,15 @@ class TradeBlock(QWidget):
             log.error('股票代码不能为空')
             self.stock_label_name.setText('股票名称')
             return
-        stock_name = self.stock_input.currentText().split(',')[1]
-        self.stock_label_name.setText(stock_name)
+        self.stock_code = self.stock_input.currentText().split(',')[0]
+        self.stock_name = self.stock_input.currentText().split(',')[1]
+        self.stock_label_name.setText(self.stock_name)
+        self.stock_snowball_id = get_snowball_stock_id(self.stock_code)
+        self.stock_last_close = ball.quote_detail(self.stock_snowball_id)['data']["quote"]['last_close']
         # 股票更新后重新设置窗口标题
         stock_name_list = [ trade_block.stock_label_name.text() for trade_block in self.parent().parent().children()[1].children()[1:]]
         self.parent().parent().setWindowTitle(" ".join(stock_name_list))
-        self.update_data()
+        # self.update_data()
 
     def eventFilter(self, obj, event):
         # 捕获 QLineEdit 的鼠标按下事件
@@ -424,13 +441,13 @@ class TradeBlock(QWidget):
 
     def update_detail_table_view(self):
         self.detail_table.setColumnCount(4)
-        self.detail_table.setRowCount(len(self.df.tail(5)))
-        for row_idx, row in enumerate(self.df.tail(5).iterrows()):
+        self.detail_table.setRowCount(len(self.df_details.tail(5)))
+        for row_idx, row in enumerate(self.df_details.tail(5).iterrows()):
             str_time = str(row[1]['Time']).zfill(5)
             itemTime = QTableWidgetItem(f"{str_time[:2]}:{str_time[2:4]}")
             itemPrice = QTableWidgetItem(f"{row[1]['Price']:.2f}")
-            if self.order_book:
-                itemPrice.setForeground(QBrush(self.price_color_choose(row[1]['Price'],self.order_book['f60'])))
+            if self.stock_last_close:
+                itemPrice.setForeground(QBrush(self.price_color_choose(row[1]['Price'],self.stock_last_close)))
             if row[1]['Type'] == '1':
                 itemVol = QTableWidgetItem(str(row[1]['Volume'])+' 🠋')
                 itemVol.setForeground(QBrush(QColor(0,255,0)))
@@ -455,26 +472,26 @@ class TradeBlock(QWidget):
     def update_order_book_timer(self):
         if not self.analyze_checkbox.isChecked():
             self.update_order_book_button.setChecked(False)
-            self.update_order_book()
+            self.update_pankou()
             self.order_book_timer.stop()
             return
         if self.update_order_book_button.isChecked():
-            self.update_order_book()
+            self.update_pankou()
             self.order_book_timer.start()
         else:
             self.order_book_timer.stop()
 
-    def analyze_data_timer(self):
-        if not self.analyze_checkbox.isChecked():
-            self.analyze_button.setChecked(False)
-            self.analyze_data()
-            self.analyze_timer.stop()
-            return
-        if self.analyze_button.isChecked():
-            self.analyze_data()
-            self.analyze_timer.start()
-        else:
-            self.analyze_timer.stop()
+    # def analyze_data_timer(self):
+    #     if not self.analyze_checkbox.isChecked():
+    #         self.analyze_button.setChecked(False)
+    #         self.analyze_data()
+    #         self.analyze_timer.stop()
+    #         return
+    #     if self.analyze_button.isChecked():
+    #         self.analyze_data()
+    #         self.analyze_timer.start()
+    #     else:
+    #         self.analyze_timer.stop()
 
     def get_volume_by_price_type(self, bid_price, bid_type):
         try:
@@ -517,27 +534,27 @@ class TradeBlock(QWidget):
         if price_current < price_yesterday_close:
             return QColor(0,255,0)
 
-    def get_order_vol_by_price(self, bid_price):
+    # def get_order_vol_by_price(self, bid_price):
 
-        for price_col, vol_col in sell_rows:
-            try:
-                price = float(self.order_book[price_col]) if self.order_book[price_col] else 0
-                volume = int(self.order_book[vol_col]) if self.order_book[vol_col] else 0
-                if price == float(bid_price):
-                    return volume
-            except:
-                continue
-        for price_col, vol_col in buy_rows:
-            try:
-                price = float(self.order_book[price_col]) if self.order_book[price_col] else 0
-                volume = int(self.order_book[vol_col]) if self.order_book[vol_col] else 0
-                if price == float(bid_price):
-                    return volume
-            except:
-                continue
-        return 0
+    #     for price_col, vol_col in sell_rows:
+    #         try:
+    #             price = float(self.order_book[price_col]) if self.order_book[price_col] else 0
+    #             volume = int(self.order_book[vol_col]) if self.order_book[vol_col] else 0
+    #             if price == float(bid_price):
+    #                 return volume
+    #         except:
+    #             continue
+    #     for price_col, vol_col in buy_rows:
+    #         try:
+    #             price = float(self.order_book[price_col]) if self.order_book[price_col] else 0
+    #             volume = int(self.order_book[vol_col]) if self.order_book[vol_col] else 0
+    #             if price == float(bid_price):
+    #                 return volume
+    #         except:
+    #             continue
+    #     return 0
 
-    def add_bid_table(self, checked, bid_type):
+    def add_bid_table(self, checked, bid_type, price, volume):
         '''
         params: bid_type 1 卖单 0 买单
         '''
@@ -545,41 +562,39 @@ class TradeBlock(QWidget):
         self.bid_table.setSortingEnabled(False)
         if not self.order_book:
             return
-        # 挂单价如果未填，通过挂买单和挂卖单自动填入
-        if not self.price_input.text():
-            if bid_type:
-                self.price_input.setText(str(self.order_book['f39']))
-            else:
-                self.price_input.setText(str(self.order_book['f19']))
         row_idx = self.bid_table.rowCount()
         self.bid_table.insertRow(row_idx)
-        # volumn 0 挂单时间
+        # column 0 挂单时间
         timeItem = QTableWidgetItem(self.time_input.text())
         timeItem.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         timeItem.setBackground(QBrush(QColor(0,0,0)))
-        # volumn 1 挂单价格
-        priceItem = QTableWidgetItem(self.price_input.text())
+        # column 1 挂单价格
+        priceItem = QTableWidgetItem(price)
         priceItem.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         # priceItem.setBackground(QBrush(QColor(0,0,0)))
-        priceItem.setForeground(QBrush(self.price_color_choose(float(self.price_input.text()),self.order_book['f60'])))
-        # volumn 2 挂单类型
+        priceItem.setForeground(QBrush(self.price_color_choose(float(price),self.stock_last_close)))
+        # column 2 挂单类型
         sell_or_buy = bid_type and '卖单' or '买单'
         color = bid_type and QColor(255,0,0) or QColor(0,255,0)
         sellOrBuyItem = QTableWidgetItem(sell_or_buy)
         sellOrBuyItem.setForeground(QBrush(color))
         sellOrBuyItem.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        # volumn 3 挂单数量
-        volumnItem = QTableWidgetItem(str(self.get_order_vol_by_price(self.price_input.text())))
+        # column 3 挂单数量
+        volumnItem = QTableWidgetItem(volume)
         volumnItem.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        # volumnItem.setBackground(QBrush(QColor(0,0,0)))
         volumnItem.setForeground(QBrush(QColor(255,255,0)))
-        # volumn 4 成交量
+        # column 4 成交量
         completedItem = QTableWidgetItem(str(self.bid_volumn))
         completedItem.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        # column 5 盘口量
+        pankouItem = QTableWidgetItem(volume)
+        pankouItem.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        pankouItem.setForeground(QBrush(QColor(255,255,0)))
         self.bid_table.setItem(row_idx,1,priceItem)
         self.bid_table.setItem(row_idx,2,sellOrBuyItem)
         self.bid_table.setItem(row_idx,3,volumnItem)
         self.bid_table.setItem(row_idx,4,completedItem)
+        self.bid_table.setItem(row_idx,6,pankouItem)
         reduceVolumeButton = IndexedPushButton("更新")
         reduceVolumeButton.row = row_idx
         reduceVolumeButton.column = 7
@@ -598,7 +613,7 @@ class TradeBlock(QWidget):
 
     def get_completed_vol(self, bid_time, bid_price, bid_type):
         # 根据挂单时间汇总数据
-        filtered_df = self.df[self.df['Time'] >= bid_time]
+        filtered_df = self.df_details[self.df_details['Time'] >= bid_time]
         filtered_df['buy_vol'] = 0
         filtered_df['sell_vol'] = 0
         filtered_df.loc[filtered_df['Type'] == '2', 'buy_vol'] = filtered_df['Volume']
@@ -661,24 +676,23 @@ class TradeBlock(QWidget):
 
     def onOrderBookSellClick(self):
         # print(self.sender().row, self.sender().column)
-        self.price_input.setText(f"{self.sender().price:.2f}")
-        self.add_bid_table(False, True)
+        self.add_bid_table(False, True, f"{self.sender().price:.2f}", f"{self.sender().volume}")
 
     def onOrderBookBuyClick(self):
         # print(self.sender().row, self.sender().column)
-        self.price_input.setText(f"{self.sender().price:.2f}")
-        self.add_bid_table(False, False)
+        self.add_bid_table(False, False, f"{self.sender().price:.2f}", f"{self.sender().volume}")
 
     def display_raw_data(self):
         """Display the raw transaction data in the table (up to 100 rows)."""
-        if self.df.empty:
-            self.result_table.setRowCount(0)
-            self.label.setText("数据为空，请尝试更新")
+        if self.df_details.empty:
+            # self.result_table.setRowCount(0)
+            self.label.setText("无数据")
             log.debug("Debug: DataFrame is empty")
-            return
-
-        # Sort data by time ascending and limit to 100 rows
-        sorted_df = self.df.sort_values(by='Time')
+            # return
+            sorted_df = self.df_fallback.sort_values(by='Time')
+        else:
+            # Sort data by time ascending and limit to 100 rows
+            sorted_df = self.df_details.sort_values(by='Time')
 
         # Set table for raw data
         self.result_table.setColumnCount(4)
@@ -721,7 +735,7 @@ class TradeBlock(QWidget):
             return
 
         # 昨日收盘价
-        yesterday_close = self.order_book['f60']
+        yesterday_close = self.stock_last_close
 
         self.order_book_sell_table.setRowCount(5)
 
@@ -760,6 +774,7 @@ class TradeBlock(QWidget):
             idx_button.row = row_idx
             idx_button.column = 2
             idx_button.price = price
+            idx_button.volume = volume
             idx_button.pressed.connect(self.onOrderBookSellClick)
             self.order_book_sell_table.setCellWidget(row_idx, 2, idx_button)
 
@@ -797,6 +812,7 @@ class TradeBlock(QWidget):
             idx_button.row = row_idx
             idx_button.column = 2
             idx_button.price = price
+            idx_button.volume = volume
             idx_button.pressed.connect(self.onOrderBookBuyClick)
             self.order_book_buy_table.setCellWidget(row_idx, 2, idx_button)
         # adjust row and column
@@ -809,15 +825,15 @@ class TradeBlock(QWidget):
 
     def update_data(self):
         try:
-            stock_code = self.stock_input.currentText().strip().split(',')[0]
-            if not stock_code:
+            # stock_code = self.stock_input.currentText().strip().split(',')[0]
+            if not self.stock_code:
                 raise ValueError("股票代码不能为空")
-            try:
-                self.stock_label_name.setText(self.stock_input.currentText().strip().split(',')[1])
-            except:
-                self.stock_label_name.setText(get_realtime_ticks(stock_code)['f58'])
+            # try:
+            #     self.stock_label_name.setText(self.stock_input.currentText().strip().split(',')[1])
+            # except:
+            #     self.stock_label_name.setText(self.get_pankou(stock_code)['f58'])
 
-            self.df = get_today_ticks(stock_code)
+            self.df = self.get_today_ticks(self.stock_code)
             log.debug("Debug: eastmoney data fetched")
             log.debug(self.df.head(10))
             required_columns = ['Time', 'Price', 'Metric', 'Volume', 'Type']
@@ -834,7 +850,7 @@ class TradeBlock(QWidget):
             self.summary_status_label.setText(f"更新失败: {str(e)}，已使用默认数据")
             log.error(f"Error: Update failed, using fallback data. Error: {str(e)}")
 
-    def update_order_book(self):
+    def update_pankou(self):
         '''
         获取实时盘口数据，并显示
         '''
@@ -842,48 +858,29 @@ class TradeBlock(QWidget):
         if not self.stock_input.currentText():
             log.error('股票代码不能为空')
             return
-        try:
-            # self.update_order_book_button.setEnabled(False)
-            stock_code = self.stock_input.currentText().strip().split(',')[0]
-            if not stock_code:
-                raise ValueError("股票代码不能为空")
 
-            # Fetch order book data only
-            for attempt in range(3):
-                try:
-                    self.order_book = get_realtime_ticks(stock_code)
-                    # 没有获取到正确数据，比如错误的股票代码
-                    if not self.order_book:
-                        return
-                    log.info("eastmoney order book data fetched")
-                    # # 最后三分钟锁单，数据不更新
-                    # if self.order_book['f31'] == '-':
-                    #     return
-                    break
-                except Exception as e:
-                    if "rate limit" in str(e).lower() and attempt < 2:
-                        time.sleep(2)
-                        continue
-                    raise
-            log.debug('卖五', self.order_book['f31'])
-            # 点盘口更新后价格输入框内容清零
-            self.price_input.setText('')
-            # 更新股票名称
-            self.stock_label_name.setText(self.order_book['f58'])
-            # 将数据时间设置为统计开始时间
-            self.time_input.setText(datetime.datetime.fromtimestamp(int(self.order_book['f86'])).strftime('%H%M%S'))
-            # 更新盘口
-            self.display_order_book()
-            # 更新 bid table
-            self.update_bid_table_order_volume()
-        except Exception as e:
-            self.order_book = None
-            self.display_order_book()
-            log.error(f"Error: Order book update failed. Error: {traceback.format_exc()}")
+        self.order_book = ball.pankou(self.stock_snowball_id)['data']
+        if not self.order_book:
+            log.error('获取盘口数据失败')
+            return
+
+        # 归一化挂单数量
+        volumes = ['bc1', 'bc2', 'bc3', 'bc4', 'bc5', 'sc1', 'sc2', 'sc3', 'sc4', 'sc5']
+        for item in volumes:
+            self.order_book[item] = int(self.order_book[item]/100)
+
+        log.debug('卖五: {}, {}, {}'.format(self.order_book['sp5'], self.order_book['sc5'], self.order_book['timestamp']))
+        # 将数据时间设置为统计开始时间
+        self.time_input.setText(datetime.datetime.fromtimestamp(self.order_book['timestamp']/1000).strftime('%H%M%S'))
+        # 更新盘口
+        self.display_order_book()
+        # 更新 bid table
+        self.update_bid_table_order_volume()
+
 
     def analyze_data(self):
         # 先更新数据再分析，盘中的时候好用
-        self.update_data()
+        # self.update_data()
         self.update_detail_table_view()
 
         try:
@@ -905,7 +902,7 @@ class TradeBlock(QWidget):
             log.error("Error: Invalid end time input")           
 
         # 初始化买入和卖出量
-        filtered_df = self.df[(self.df['Time'] >= start_time) & (self.df['Time'] <= end_time)]
+        filtered_df = self.df_details[(self.df_details['Time'] >= start_time) & (self.df_details['Time'] <= end_time)]
         filtered_df['buy_vol'] = 0
         filtered_df['sell_vol'] = 0
         filtered_df.loc[filtered_df['Type'] == '2', 'buy_vol'] = filtered_df['Volume']
@@ -939,6 +936,84 @@ class TradeBlock(QWidget):
             self.update_bid_table()
 
         self.summary_status_label.setText(f"分析完成，从{start_time}开始")
+
+    def update_trade_details(self):
+        '''
+        selenium 循环获取 sse 数据
+        如果 自动未选取，一次性更新 df_details
+        如果 自动选取，循环更新 df_details
+        '''
+        self.df_details = pd.DataFrame()
+
+        options = Options()
+        options.add_argument('--headless=new')  # 测试通过后再开启
+        options.add_argument('--disable-gpu')
+        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36')
+
+        # 启用 performance log（用于捕获网络事件）
+        options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
+
+        driver = webdriver.Chrome(options=options)
+
+        id = self.stock_code.startswith('6') and '1.{}'.format(self.stock_code) or '0.{}'.format(self.stock_code)
+        page_url = f"https://quote.eastmoney.com/f1.html?newcode={id}"
+        print(page_url)
+        driver.get(page_url)
+
+        # 等待页面加载完成 + JS 发起 SSE（通常 3-8 秒）
+        time.sleep(1)
+        log.debug("页面已打开，开始监听 SSE 数据推送...")
+
+        # 启用 Network CDP
+        driver.execute_cdp_cmd("Network.enable", {})
+        logs = driver.get_log('performance')
+        for entry in logs:
+            try:
+                # if 'Network.eventSourceMessageReceived' in entry['message']:
+                if 'rc' in entry['message'] and 'code' in entry['message'] and self.stock_code in entry['message'] and 'Network.eventSourceMessageReceived' in entry['message']:
+                    message = json.loads(entry['message'])
+                    requestId = message['message']['params']['requestId']
+                    print("request id:", requestId)
+                    data = json.loads(message['message']['params']['data'])
+                    self.df_details = raw_to_dataframe(data)
+                    print(self.df_details)
+                    log.debug("Debug: eastmoney data fetched")
+                    log.debug(self.df_details.head(10))
+                    required_columns = ['Time', 'Price', 'Metric', 'Volume', 'Type']
+                    if not all(col in self.df_details.columns for col in required_columns):
+                        raise ValueError(f"缺少必要列，实际列: {self.df_details.columns}")
+                    self.df_details = self.df_details[required_columns].copy()
+                    if self.df_details.empty:
+                        raise ValueError("过滤后数据为空，可能全是中性盘或无有效交易")
+                    self.summary_status_label.setText("数据已更新，输入时间")
+            except Exception as e:
+                self.df_details = pd.DataFrame()
+                self.time_input.setText(str(self.df_fallback['Time'].iloc[0]))
+                self.summary_status_label.setText(f"更新失败: {str(e)}，已使用默认数据")
+                log.error(f"Error: Update trade details failed, using fallback data. Error: {str(e)}")
+        driver.quit()
+        log.debug('页面已关闭')
+        if not self.analyze_checkbox.isChecked():
+            self.analyze_button.setChecked(False)
+        self.analyze_data()
+
+
+def raw_to_dataframe(data_json):
+    # Convert data to DataFrame
+    df = pd.DataFrame([row.split(',') for row in data_json['data']['details']], 
+                    columns=['Time', 'Price', 'Volume', 'Metric', 'Type'])
+    # Convert columns to appropriate types
+    df['Time'] = df['Time'].map(lambda x: str(x).zfill(6))
+    df['Price'] = df['Price'].astype(float)
+    df['Volume'] = df['Volume'].astype(int)
+    df['Metric'] = df['Metric'].astype(int)
+    df['Type'] = df['Type'].astype(str)
+    # Convert time from HH:MM:SS to HHMM
+    try:
+        df['Time'] = df['Time'].str.replace(':', '').astype(int)
+    except Exception as e:
+        raise ValueError(f"时间格式转换失败: {str(e)}")
+    return df
 
 
 class TradeAnalyzer(QMainWindow):
@@ -976,6 +1051,10 @@ def get_stock_list_from_command_line():
         stock_list.append(stock_str)
         stock_name_list.append(stock_str.split(',')[1])
     return stock_list, stock_name_list
+
+
+def get_snowball_stock_id(stock_code):
+    return stock_code.startswith('6') and 'SH{}'.format(stock_code) or 'SZ{}'.format(stock_code)
 
 
 if __name__ == '__main__':

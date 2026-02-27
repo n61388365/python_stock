@@ -8,8 +8,8 @@ else:
     import log
 
 
-# proxy_host_list = ['localhost:7789']
-proxy_host_list = ['localhost:37890', 'localhost:7789', 'localhost:7890', 'localhost:10809']
+# proxy_host_list = ['localhost:37890', 'localhost:7789', 'localhost:7890', 'localhost:10809']
+proxy_host_list = ['localhost:7890']
 # proxy_host_list = ['localhost:7789', 'localhost:7890']
 call_count = 0
 lock = threading.Lock()
@@ -60,6 +60,7 @@ def get_his_kindle(stock_code='000750',klt=101,proxy_flag=False):
         except Exception as e:
             retry = retry - 1
             log.error(f"{stock_code} {proxy_host} {e}, retry {10 - retry}, wait 5 second")
+            time.sleep(5)
             if response:
                 response.close()
 

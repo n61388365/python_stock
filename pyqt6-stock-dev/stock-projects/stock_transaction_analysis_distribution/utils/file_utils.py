@@ -5,7 +5,6 @@
 import re
 from pypinyin import pinyin, Style
 import pandas as pd
-import log
 
 
 def _get_stocks_df():
@@ -20,7 +19,7 @@ def _get_pinyin_list_from_df(df:pd.DataFrame):
         stock_code = row[0][2:]
         stock_name = row[1]
         stock_price = row[2]
-        log.debug(f'{stock_code},{stock_name},{stock_price}')
+        print(f'{stock_code},{stock_name},{stock_price}')
         # 去除 *ST 等非汉字前缀
         clean_name = re.sub(r'^\*ST|\s+', '', stock_name)
         # 获取拼音

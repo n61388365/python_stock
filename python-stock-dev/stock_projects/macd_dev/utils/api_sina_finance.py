@@ -13,7 +13,7 @@ else:
     import log
 
 
-proxy_host = 'localhost:7789'
+proxy_host = 'localhost:7890'
 
 
 ## eastmoney secid
@@ -58,8 +58,8 @@ def get_his_kindle(stock_code='000750',klt=5,proxy_flag=False):
 
 def test_his_kindle():
     stock_code = '603049'
-    print(len(get_his_kindle(stock_code,60,False)))
-    print(get_his_kindle(stock_code,60,False))
+    print(len(get_his_kindle(stock_code,60,True)))
+    print(get_his_kindle(stock_code,60,True))
 
 
 if __name__ == '__main__':

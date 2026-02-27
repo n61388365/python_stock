@@ -1,5 +1,5 @@
 def get_cookies():
-    with open('xueqiu_cookies.txt','r') as f:
+    with open('cookies_xueqiu.txt','r') as f:
         line = f.readline()
     cookie_string = line.rstrip()
     cookie_dict = {}

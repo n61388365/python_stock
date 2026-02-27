@@ -54,7 +54,7 @@ def init_all_A_stocks_day_data():
     log.info(f"total {len(stock_code_list)} stocks")
     start_time = time.localtime()
     
-    step = 1000
+    step = 36
     for seg in range(int(len(stock_code_list)/step)+1):
         if len(stock_code_list)-seg*step < step:
             seg_list = stock_code_list[seg*step:]

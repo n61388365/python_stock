@@ -1,5 +1,6 @@
 import urllib.request
 import json
+import requests
 
 
 ## https://youle.zhipin.com/articles/65dc904f019f799fqxB73tm1EA~~.html
@@ -8,6 +9,9 @@ import json
 def get_transaction_details():
 
     url='http://16.push2.eastmoney.com/api/qt/stock/details/sse?fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f55&mpi=2000&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&pos=-0&secid=0.300026'
+    url='http://82.push2.eastmoney.com/api/qt/stock/details/sse?fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f55&mpi=2000&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&pos=-0&secid=0.300026'
+    url='http://12.push2.eastmoney.com/api/qt/stock/details/sse?fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f55&mpi=2000&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&pos=-0&secid=0.300026'
+    url='https://27.push2.eastmoney.com/api/qt/stock/details/sse?fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f55&mpi=2000&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&pos=-0&secid=0.300026'
 
     with urllib.request.urlopen(url=url) as r:
         data=r.readline().decode().lstrip('data:')
@@ -32,5 +36,5 @@ def get_realtime_ticks(stock_code):
 
 
 if __name__ == '__main__':
-    print(get_realtime_ticks('601568'))
-    # print(get_transaction_details())
+    # print(get_realtime_ticks('601568'))
+    print(get_transaction_details())
